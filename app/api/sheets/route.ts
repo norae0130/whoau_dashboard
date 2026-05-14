@@ -80,22 +80,23 @@ async function fetchOrderData(): Promise<OrderRow[]> {
   const text = await res.text();
   const rows = parseCsv(text);
 
-  // 5행(index 4)부터 데이터 시작
-  // A=연도, B=시즌No, C=시즌명, D=카테고리코드, E=카테고리명, J=발주액[정상가+예판가]
+  // 스판재: 6행(index 5)부터 데이터 시작
+  // F=연도(index 5), G=시즌(index 6), J=아이템소분류(index 9), N=발주액[정상가+예판가](index 13)
   const result: OrderRow[] = [];
-  for (let i = 4; i < rows.length; i++) {
+  for (let i = 5; i < rows.length; i++) {
     const r = rows[i];
-    if (!r[0] || !r[9]) continue; // 연도나 J열 없으면 스킵
-    const year = parseInt(r[0]);
-    if (isNaN(year)) continue;
+    const year = parseInt(r[5]);
+    if (isNaN(year) || year < 2000) continue;
+    const orderAmt = toNum(r[13]);
+    if (orderAmt === 0) continue;
 
     result.push({
       year,
-      seasonNo: parseInt(r[1]) || 0,
-      seasonName: r[2] || "",
-      categoryCode: r[3] || "",
-      categoryName: r[4] || "",
-      orderAmt: toNum(r[9]),
+      seasonNo: parseInt(r[6]) || 0,
+      seasonName: r[6] || "",
+      categoryCode: r[9] || "",
+      categoryName: r[9] || "",
+      orderAmt,
     });
   }
   return result;
@@ -106,38 +107,40 @@ async function fetchSalesData(): Promise<{ weekLabels: string[]; rows: SalesRow[
   const text = await res.text();
   const rows = parseCsv(text);
 
-  // 4행(index 3): 달력연도/주 헤더 (K열=index 10부터)
-  // 5행(index 4): "정상판매액" 레이블
-  // 6행(index 5): KRW 단위
-  // 7행(index 6)부터: 데이터
-  // E=연도(index 4), F=시즌No(index 5), G=시즌명(index 6), H=카테고리코드(index 7), I=카테고리명(index 8)
+  // 매상세: 4행(index 3)에 주차 헤더(K열=index 10부터 "2023-36" 형식)
+  // 데이터는 7행(index 6)부터
+  // F=연도(index 5), G=시즌(index 6), J=아이템소분류(index 9)
   // K열(index 10)~: 주차별 정상판매액
 
   const headerRow = rows[3] || [];
-  // 주차 레이블 수집 (index 10부터)
   const weekLabels: string[] = [];
   for (let c = 10; c < headerRow.length; c++) {
-    if (headerRow[c]) weekLabels.push(headerRow[c]);
+    const val = headerRow[c]?.trim();
+    if (val && /^\d{4}-\d{2}$/.test(val)) weekLabels.push(val);
   }
 
   const salesRows: SalesRow[] = [];
   for (let i = 6; i < rows.length; i++) {
     const r = rows[i];
-    if (!r[4]) continue;
-    const year = parseInt(r[4]);
-    if (isNaN(year)) continue;
+    const year = parseInt(r[5]);
+    if (isNaN(year) || year < 2000) continue;
+    const categoryCode = r[9]?.trim();
+    if (!categoryCode) continue;
 
     const weekSales: WeekSales[] = weekLabels.map((label, idx) => ({
       weekLabel: label,
       sales: toNum(r[10 + idx] || "0"),
     }));
 
+    // 판매액이 하나라도 있는 행만 포함
+    if (weekSales.every((w) => w.sales === 0)) continue;
+
     salesRows.push({
       year,
-      seasonNo: parseInt(r[5]) || 0,
+      seasonNo: parseInt(r[6]) || 0,
       seasonName: r[6] || "",
-      categoryCode: r[7] || "",
-      categoryName: r[8] || "",
+      categoryCode,
+      categoryName: categoryCode,
       weekSales,
     });
   }

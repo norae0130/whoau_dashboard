@@ -79,7 +79,9 @@ export default function DashboardPage() {
   }, [tab, sellThrough.length]);
 
   const summary = weekly2023.length && weekly2024.length ? compareYears(weekly2023, weekly2024) : null;
-  const seasonOptions = Array.from(new Set(sellThrough.map((d) => d.seasonName))).sort();
+  // G열 시즌은 숫자(1,2,3,4)이므로 숫자 정렬
+  const seasonOptions = Array.from(new Set(sellThrough.map((d) => d.seasonName)))
+    .sort((a, b) => parseInt(a) - parseInt(b));
   const categoryOptions = Array.from(new Set(sellThrough.map((d) => d.categoryCode))).sort();
 
   const categorySummary = sellThrough.map((d) => {
@@ -174,7 +176,7 @@ export default function DashboardPage() {
                 <select value={filterSeason} onChange={(e) => setFilterSeason(e.target.value)}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
                   <option value="all">전체 시즌</option>
-                  {seasonOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {seasonOptions.map((s) => <option key={s} value={s}>시즌 {s}</option>)}
                 </select>
                 <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
