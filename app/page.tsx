@@ -65,6 +65,22 @@ export default function DashboardPage() {
     loadSheets();
   }, []);
 
+  // 수동 새로고침
+  const refreshSheets = async () => {
+    setSheetsLoading(true);
+    setSheetsError("");
+    try {
+      const res = await fetch("/api/sheets?refresh=" + Date.now());
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setSellThrough(json.sellThrough);
+    } catch (e: unknown) {
+      setSheetsError(e instanceof Error ? e.message : "구글 시트 로딩 실패");
+    } finally {
+      setSheetsLoading(false);
+    }
+  };
+
   const summary = weekly2023.length && weekly2024.length
     ? compareYears(weekly2023, weekly2024) : null;
 
@@ -183,10 +199,20 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-gray-50 p-6">
       {/* 헤더 */}
-      <div className="mb-6">
-        <p className="text-xs text-gray-400 font-medium tracking-widest uppercase mb-1">Who.A.U MD Dashboard</p>
-        <h1 className="text-2xl font-semibold text-gray-900">리오더 의사결정 시스템</h1>
-        <p className="text-sm text-gray-500 mt-1">기상청 ASOS × 카테고리 정판율 × AI 예측</p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <p className="text-xs text-gray-400 font-medium tracking-widest uppercase mb-1">Who.A.U MD Dashboard</p>
+          <h1 className="text-2xl font-semibold text-gray-900">리오더 의사결정 시스템</h1>
+          <p className="text-sm text-gray-500 mt-1">기상청 ASOS × 카테고리 정판율 × AI 예측</p>
+        </div>
+        <button
+          onClick={refreshSheets}
+          disabled={sheetsLoading}
+          className="flex items-center gap-2 text-sm border border-gray-200 rounded-lg px-4 py-2 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-1"
+        >
+          <span className={sheetsLoading ? "animate-spin inline-block" : ""}>↻</span>
+          {sheetsLoading ? "불러오는 중..." : "시트 새로고침"}
+        </button>
       </div>
 
       {/* 탭 */}
