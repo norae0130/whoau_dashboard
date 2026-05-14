@@ -44,7 +44,7 @@ export function aggregateWeekly(data: DailyWeather[]): WeeklyWeather[] {
   }
 
   const result: WeeklyWeather[] = [];
-  for (const [label, rows] of map.entries()) {
+  for (const [label, rows] of Array.from(map.entries())) {
     const [yearStr] = label.split("-W");
     const week = parseInt(label.split("W")[1]);
     const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
