@@ -2,45 +2,33 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { aggregateWeekly, compareYears, WeeklyWeather } from "@/lib/weather";
-import WeatherChart from "@/components/WeatherChart";
-import SellThroughChart from "@/components/SellThroughChart";
+import WeatherSellChart from "@/components/WeatherSellChart";
 import { CategorySellThrough } from "@/app/api/sheets/route";
 
-const WEATHER_CATEGORIES = [
-  { key: "outer", label: "아우터" },
-  { key: "padding", label: "패딩" },
-  { key: "knit", label: "니트" },
-  { key: "pants", label: "팬츠" },
-  { key: "dress", label: "원피스" },
-  { key: "acc", label: "액세서리" },
-];
-
-type Tab = "weather" | "sellrate" | "predict";
+type Tab = "weather" | "predict";
 
 export default function DashboardPage() {
   const [tab, setTab] = useState<Tab>("weather");
 
-  // 날씨
+  // 날씨 데이터
   const [weekly2023, setWeekly2023] = useState<WeeklyWeather[]>([]);
   const [weekly2024, setWeekly2024] = useState<WeeklyWeather[]>([]);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState("");
-  const [selectedCat, setSelectedCat] = useState("outer");
-  const [showYear, setShowYear] = useState<"both" | "2023" | "2024">("both");
 
-  // 정판율
+  // 정판율 데이터 (구글 시트)
   const [sellThrough, setSellThrough] = useState<CategorySellThrough[]>([]);
-  const [sheetsLoading, setSheetsLoading] = useState(false);
+  const [sheetsLoading, setSheetsLoading] = useState(true);
   const [sheetsError, setSheetsError] = useState("");
 
-  // 3단계 필터
+  // 필터
   const [filterYear, setFilterYear] = useState("all");
   const [filterSeason, setFilterSeason] = useState("all");
   const [filterCat, setFilterCat] = useState("all");
 
-  // 날씨 로드
+  // 날씨 + 정판율 동시 로드
   useEffect(() => {
-    async function load() {
+    async function loadWeather() {
       setWeatherLoading(true);
       try {
         const [r23, r24] = await Promise.all([
@@ -48,8 +36,8 @@ export default function DashboardPage() {
           fetch("/api/weather?startDt=20240101&endDt=20241231"),
         ]);
         const [j23, j24] = await Promise.all([r23.json(), r24.json()]);
-        if (j23.error) throw new Error(`2023: ${j23.error}`);
-        if (j24.error) throw new Error(`2024: ${j24.error}`);
+        if (j23.error) throw new Error(j23.error);
+        if (j24.error) throw new Error(j24.error);
         setWeekly2023(aggregateWeekly(j23.data));
         setWeekly2024(aggregateWeekly(j24.data));
       } catch (e: unknown) {
@@ -58,46 +46,41 @@ export default function DashboardPage() {
         setWeatherLoading(false);
       }
     }
-    load();
-  }, []);
 
-  // 정판율 로드
-  useEffect(() => {
-    if (tab !== "sellrate" || sellThrough.length > 0) return;
-    async function load() {
+    async function loadSheets() {
       setSheetsLoading(true);
-      setSheetsError("");
       try {
         const res = await fetch("/api/sheets");
         const json = await res.json();
         if (json.error) throw new Error(json.error);
         setSellThrough(json.sellThrough);
       } catch (e: unknown) {
-        setSheetsError(e instanceof Error ? e.message : "구글 시트 데이터 로딩 실패");
+        setSheetsError(e instanceof Error ? e.message : "구글 시트 로딩 실패");
       } finally {
         setSheetsLoading(false);
       }
     }
-    load();
-  }, [tab, sellThrough.length]);
 
-  const summary = weekly2023.length && weekly2024.length ? compareYears(weekly2023, weekly2024) : null;
+    loadWeather();
+    loadSheets();
+  }, []);
 
-  // ── 3단계 연동 필터 옵션 ──
-  // 1단계: 연도 옵션 (전체 데이터 기준)
+  const summary = weekly2023.length && weekly2024.length
+    ? compareYears(weekly2023, weekly2024) : null;
+
+  // ── 연동 필터 옵션 ──
   const yearOptions = useMemo(() =>
     Array.from(new Set(sellThrough.map((d) => String(d.year)))).sort(),
     [sellThrough]
   );
 
-  // 2단계: 시즌 옵션 (연도 필터 적용 후)
   const seasonOptions = useMemo(() => {
-    const base = filterYear === "all" ? sellThrough : sellThrough.filter((d) => String(d.year) === filterYear);
+    const base = filterYear === "all" ? sellThrough
+      : sellThrough.filter((d) => String(d.year) === filterYear);
     return Array.from(new Set(base.map((d) => d.seasonName)))
       .sort((a, b) => parseInt(a) - parseInt(b));
   }, [sellThrough, filterYear]);
 
-  // 3단계: 카테고리 옵션 (연도+시즌 필터 적용 후)
   const categoryOptions = useMemo(() => {
     const base = sellThrough.filter((d) => {
       const ym = filterYear === "all" || String(d.year) === filterYear;
@@ -107,19 +90,12 @@ export default function DashboardPage() {
     return Array.from(new Set(base.map((d) => d.categoryCode))).sort();
   }, [sellThrough, filterYear, filterSeason]);
 
-  // 필터 변경 시 하위 필터 초기화
-  const handleYearChange = (v: string) => {
-    setFilterYear(v);
-    setFilterSeason("all");
-    setFilterCat("all");
-  };
-  const handleSeasonChange = (v: string) => {
-    setFilterSeason(v);
-    setFilterCat("all");
-  };
+  const handleYearChange = (v: string) => { setFilterYear(v); setFilterSeason("all"); setFilterCat("all"); };
+  const handleSeasonChange = (v: string) => { setFilterSeason(v); setFilterCat("all"); };
 
-  // 최종 필터 적용 데이터
-  const filteredData = useMemo(() =>
+  // ── 차트 데이터 합성 ──
+  // 필터에 맞는 정판율 데이터 추출
+  const filteredST = useMemo(() =>
     sellThrough.filter((d) => {
       const ym = filterYear === "all" || String(d.year) === filterYear;
       const sm = filterSeason === "all" || d.seasonName === filterSeason;
@@ -129,24 +105,80 @@ export default function DashboardPage() {
     [sellThrough, filterYear, filterSeason, filterCat]
   );
 
-  // 테이블용 요약 (최신 누적 정판율)
-  const tableSummary = useMemo(() =>
-    filteredData.map((d) => {
-      const last = d.points.filter((p) => p.cumulativeSales > 0).slice(-1)[0];
+  // 주차별 정판율 평균 맵 구성
+  const sellRateByWeek = useMemo(() => {
+    const map = new Map<string, { sum: number; cnt: number }>();
+    for (const series of filteredST) {
+      for (const pt of series.points) {
+        const prev = map.get(pt.weekLabel) ?? { sum: 0, cnt: 0 };
+        map.set(pt.weekLabel, {
+          sum: prev.sum + pt.sellThroughRate,
+          cnt: prev.cnt + 1,
+        });
+      }
+    }
+    const result = new Map<string, number>();
+    for (const [week, { sum, cnt }] of Array.from(map.entries())) {
+      result.set(week, Math.round((sum / cnt) * 10) / 10);
+    }
+    return result;
+  }, [filteredST]);
+
+  // 날씨 주차 데이터와 정판율 병합
+  // 날씨는 두 연도 평균 최저기온 사용 (filterYear에 따라 분기)
+  const chartData = useMemo(() => {
+    const useYear = filterYear !== "all" ? parseInt(filterYear) : null;
+    const weatherSrc = useYear === 2023 ? weekly2023
+      : useYear === 2024 ? weekly2024
+      : (() => {
+          // 두 연도 평균
+          const map = new Map<number, number[]>();
+          for (const w of [...weekly2023, ...weekly2024]) {
+            const prev = map.get(w.week) ?? [];
+            prev.push(w.avgMinTemp);
+            map.set(w.week, prev);
+          }
+          return Array.from(map.entries()).map(([week, temps]) => ({
+            week,
+            year: 0,
+            label: `W${String(week).padStart(2, "0")}`,
+            startDate: "",
+            avgMinTemp: Math.round(temps.reduce((a, b) => a + b, 0) / temps.length * 10) / 10,
+            avgMaxTemp: 0,
+            coldDays: 0,
+            harshDays: 0,
+          } as WeeklyWeather));
+        })();
+
+    return weatherSrc.map((w) => {
+      // 주차 레이블: "YYYY-WW" 형식으로 정판율 맵 키와 매칭
+      // 정판율 맵은 "2023-36" 형식 → 해당 연도-주차로 찾기
+      const yr = useYear ?? 2024;
+      const weekKey = `${yr}-${String(w.week).padStart(2, "0")}`;
+      const rate = sellRateByWeek.get(weekKey) ?? null;
       return {
-        ...d,
-        latestRate: last?.sellThroughRate ?? 0,
-        latestSales: last?.cumulativeSales ?? 0,
+        week: `W${String(w.week).padStart(2, "0")}`,
+        minTemp: w.avgMinTemp,
+        sellRate: rate,
       };
-    }),
-    [filteredData]
+    });
+  }, [weekly2023, weekly2024, filterYear, sellRateByWeek]);
+
+  // 테이블 요약
+  const tableSummary = useMemo(() =>
+    filteredST.map((d) => {
+      const last = d.points.filter((p) => p.cumulativeSales > 0).slice(-1)[0];
+      return { ...d, latestRate: last?.sellThroughRate ?? 0, latestSales: last?.cumulativeSales ?? 0 };
+    }).sort((a, b) => b.latestRate - a.latestRate),
+    [filteredST]
   );
 
-  // 요약 지표
-  const totalOrder = filteredData.reduce((s, d) => s + d.orderAmt, 0);
+  const totalOrder = filteredST.reduce((s, d) => s + d.orderAmt, 0);
   const totalSales = tableSummary.reduce((s, d) => s + d.latestSales, 0);
   const overallRate = totalOrder > 0 ? (totalSales / totalOrder) * 100 : 0;
-  const reorderCount = tableSummary.filter((d) => d.latestRate >= 70).length;
+
+  const isLoading = weatherLoading || sheetsLoading;
+  const hasError = weatherError || sheetsError;
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
@@ -159,69 +191,42 @@ export default function DashboardPage() {
 
       {/* 탭 */}
       <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {([ ["weather","🌡 날씨 분석"], ["sellrate","📊 정판율"], ["predict","🔮 시즌 예측"] ] as [Tab, string][]).map(([key, label]) => (
+        {([ ["weather","🌡 날씨 × 정판율"], ["predict","🔮 시즌 예측"] ] as [Tab, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors ${
-              tab === key ? "bg-white border-gray-200 text-gray-900 -mb-px" : "bg-transparent border-transparent text-gray-500 hover:text-gray-700"
+              tab === key ? "bg-white border-gray-200 text-gray-900 -mb-px"
+              : "bg-transparent border-transparent text-gray-500 hover:text-gray-700"
             }`}>
             {label}
           </button>
         ))}
       </div>
 
-      {/* ── 날씨 탭 ── */}
+      {/* ── 날씨 × 정판율 탭 ── */}
       {tab === "weather" && (
         <div>
-          {weatherLoading && <LoadingSpinner text="기상청 ASOS 데이터 불러오는 중..." />}
-          {weatherError && <ErrorBox message={weatherError} sub=".env.local의 WEATHER_API_KEY를 확인해 주세요." />}
-          {!weatherLoading && !weatherError && (
+          {isLoading && <LoadingSpinner text="기상청 · 구글 시트 데이터 불러오는 중..." />}
+          {hasError && <ErrorBox message={weatherError || sheetsError} />}
+
+          {!isLoading && !hasError && (
             <>
+              {/* 요약 지표 */}
               {summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                   <MetricCard label="2023 연평균 최저기온" value={`${summary.avgMinTemp2023}°C`} />
                   <MetricCard label="2024 연평균 최저기온" value={`${summary.avgMinTemp2024}°C`}
-                    sub={`전년 대비 ${summary.avgMinTemp2024 > summary.avgMinTemp2023 ? "+" : ""}${(summary.avgMinTemp2024 - summary.avgMinTemp2023).toFixed(1)}°C`} />
-                  <MetricCard label="영하일수 (2023/2024)" value={`${summary.coldDays2023} / ${summary.coldDays2024}일`} />
-                  <MetricCard label="한파일수 (2023/2024)" value={`${summary.harshDays2023} / ${summary.harshDays2024}일`} sub="최저기온 -10°C 미만" />
+                    sub={`전년比 ${summary.avgMinTemp2024 > summary.avgMinTemp2023 ? "+" : ""}${(summary.avgMinTemp2024 - summary.avgMinTemp2023).toFixed(1)}°C`} />
+                  <MetricCard label="종합 정판율" value={`${overallRate.toFixed(1)}%`}
+                    highlight={overallRate >= 70 ? "green" : overallRate >= 50 ? "amber" : "red"} />
+                  <MetricCard label="리오더 권장" value={`${tableSummary.filter(d => d.latestRate >= 70).length}개`}
+                    sub={`전체 ${tableSummary.length}개 중`} />
                 </div>
               )}
-              <div className="flex flex-wrap gap-3 mb-4">
-                <select value={showYear} onChange={(e) => setShowYear(e.target.value as "both"|"2023"|"2024")}
-                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
-                  <option value="both">2023 + 2024 비교</option>
-                  <option value="2023">2023년만</option>
-                  <option value="2024">2024년만</option>
-                </select>
-                <select value={selectedCat} onChange={(e) => setSelectedCat(e.target.value)}
-                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
-                  {WEATHER_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                </select>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
-                  주간 최저기온 × {WEATHER_CATEGORIES.find((c) => c.key === selectedCat)?.label} 판매 지수
-                </p>
-                <WeatherChart data2023={weekly2023} data2024={weekly2024} selectedCategory={selectedCat} showYear={showYear} />
-              </div>
-              <p className="mt-4 text-xs text-gray-400">데이터 출처: 기상청 기상자료개방포털 ASOS (서울 관측소 108)</p>
-            </>
-          )}
-        </div>
-      )}
 
-      {/* ── 정판율 탭 ── */}
-      {tab === "sellrate" && (
-        <div>
-          {sheetsLoading && <LoadingSpinner text="구글 시트에서 데이터 불러오는 중..." />}
-          {sheetsError && <ErrorBox message={sheetsError} sub="구글 시트가 공개(뷰어) 설정인지 확인해 주세요." />}
-
-          {!sheetsLoading && !sheetsError && sellThrough.length > 0 && (
-            <>
               {/* 3단계 필터 */}
               <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5">
                 <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">필터</p>
-                <div className="flex flex-wrap gap-3">
-                  {/* 1단계: 연도 */}
+                <div className="flex flex-wrap gap-3 items-end">
                   <div className="flex flex-col gap-1">
                     <label className="text-xs text-gray-400">연도</label>
                     <select value={filterYear} onChange={(e) => handleYearChange(e.target.value)}
@@ -230,8 +235,6 @@ export default function DashboardPage() {
                       {yearOptions.map((y) => <option key={y} value={y}>{y}년</option>)}
                     </select>
                   </div>
-
-                  {/* 2단계: 시즌 */}
                   <div className="flex flex-col gap-1">
                     <label className="text-xs text-gray-400">시즌</label>
                     <select value={filterSeason} onChange={(e) => handleSeasonChange(e.target.value)}
@@ -240,140 +243,86 @@ export default function DashboardPage() {
                       {seasonOptions.map((s) => <option key={s} value={s}>시즌 {s}</option>)}
                     </select>
                   </div>
-
-                  {/* 3단계: 카테고리 */}
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400">카테고리</label>
+                    <label className="text-xs text-gray-400">아이템소분류</label>
                     <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)}
                       className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white min-w-[130px]">
                       <option value="all">전체</option>
                       {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
-
-                  {/* 필터 초기화 */}
-                  <div className="flex flex-col gap-1 justify-end">
-                    <button onClick={() => { handleYearChange("all"); }}
-                      className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-3 py-2 bg-white transition-colors">
-                      초기화
-                    </button>
-                  </div>
+                  <button onClick={() => handleYearChange("all")}
+                    className="text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg px-3 py-2 bg-white transition-colors">
+                    초기화
+                  </button>
                 </div>
               </div>
 
-              {/* 요약 지표 — 필터 적용 결과 기준 */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-                <MetricCard label="조회 카테고리" value={`${tableSummary.length}개`} />
-                <MetricCard
-                  label="발주액 합계"
-                  value={totalOrder >= 100000000
-                    ? `${(totalOrder / 100000000).toFixed(1)}억`
-                    : `${(totalOrder / 10000).toLocaleString()}만`}
-                  sub="KRW"
-                />
-                <MetricCard
-                  label="누적 판매액"
-                  value={totalSales >= 100000000
-                    ? `${(totalSales / 100000000).toFixed(1)}억`
-                    : `${(totalSales / 10000).toLocaleString()}만`}
-                  sub="KRW"
-                />
-                <MetricCard
-                  label="종합 정판율"
-                  value={`${overallRate.toFixed(1)}%`}
-                  sub={`리오더 권장 ${reorderCount}개`}
-                  highlight={overallRate >= 70 ? "green" : overallRate >= 50 ? "amber" : "red"}
-                />
+              {/* 통합 차트 */}
+              <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    주간 최저기온 × 누적 정판율
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    파란선 = 최저기온 · 초록막대 = 정판율(2개년 평균) · 주황선 = 70% 기준
+                  </p>
+                </div>
+                <WeatherSellChart data={chartData} />
               </div>
 
-              {/* 누적 정판율 차트 */}
-              {filteredData.length > 0 && (
-                <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5">
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">누적 정판율 추이</p>
-                  <p className="text-xs text-gray-400 mb-3">
-                    실선 = 2024 · 점선 = 2023 · <span style={{color:"#D85A30"}}>— 70% 기준선</span>
-                  </p>
-                  <SellThroughChart
-                    data={filteredData}
-                    selectedCategory={filterCat}
-                    selectedSeason={filterSeason}
-                  />
+              {/* 카테고리별 테이블 */}
+              {tableSummary.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">카테고리별 정판율</p>
+                    <p className="text-xs text-gray-400">{tableSummary.length}개 항목 · 정판율 높은 순</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-gray-50">
+                          {["연도","시즌","카테고리","발주액","누적판매액","정판율","","리오더"].map((h, i) => (
+                            <th key={i} className={`px-4 py-3 text-xs font-medium text-gray-500 ${i >= 3 ? "text-right" : "text-left"} ${i === 7 ? "text-center" : ""}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tableSummary.map((d) => (
+                          <tr key={`${d.year}_${d.seasonNo}_${d.categoryCode}`}
+                            className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 text-gray-500">{d.year}</td>
+                            <td className="px-4 py-3 text-gray-500">시즌 {d.seasonName}</td>
+                            <td className="px-4 py-3 font-medium text-gray-900">{d.categoryCode}</td>
+                            <td className="px-4 py-3 text-right text-gray-500 tabular-nums">
+                              {fmtKRW(d.orderAmt)}
+                            </td>
+                            <td className="px-4 py-3 text-right text-gray-500 tabular-nums">
+                              {fmtKRW(d.latestSales)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold tabular-nums"
+                              style={{ color: rateColor(d.latestRate) }}>
+                              {d.latestRate.toFixed(1)}%
+                            </td>
+                            <td className="px-4 py-3 w-24">
+                              <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full rounded-full"
+                                  style={{ width: `${Math.min(100, d.latestRate)}%`, background: rateColor(d.latestRate) }} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <ReorderBadge rate={d.latestRate} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
-              {/* 테이블 */}
-              <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">카테고리별 정판율</p>
-                  <p className="text-xs text-gray-400">{tableSummary.length}개 항목</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100 bg-gray-50">
-                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">연도</th>
-                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">시즌</th>
-                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">카테고리</th>
-                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">발주액</th>
-                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">누적판매액</th>
-                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">정판율</th>
-                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">진행바</th>
-                        <th className="text-center px-4 py-3 text-xs font-medium text-gray-500">리오더</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tableSummary.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
-                            조건에 맞는 데이터가 없습니다.
-                          </td>
-                        </tr>
-                      ) : (
-                        tableSummary
-                          .sort((a, b) => b.latestRate - a.latestRate)
-                          .map((d) => (
-                            <tr key={`${d.year}_${d.seasonNo}_${d.categoryCode}`}
-                              className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-3 text-gray-500">{d.year}</td>
-                              <td className="px-4 py-3 text-gray-500">시즌 {d.seasonName}</td>
-                              <td className="px-4 py-3 font-medium text-gray-900">{d.categoryCode}</td>
-                              <td className="px-4 py-3 text-right text-gray-500 tabular-nums">
-                                {d.orderAmt >= 100000000
-                                  ? `${(d.orderAmt / 100000000).toFixed(1)}억`
-                                  : `${(d.orderAmt / 10000).toLocaleString()}만`}
-                              </td>
-                              <td className="px-4 py-3 text-right text-gray-500 tabular-nums">
-                                {d.latestSales >= 100000000
-                                  ? `${(d.latestSales / 100000000).toFixed(1)}억`
-                                  : `${(d.latestSales / 10000).toLocaleString()}만`}
-                              </td>
-                              <td className="px-4 py-3 text-right font-semibold tabular-nums"
-                                style={{ color: rateColor(d.latestRate) }}>
-                                {d.latestRate.toFixed(1)}%
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center justify-end gap-2">
-                                  <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className="h-full rounded-full transition-all"
-                                      style={{
-                                        width: `${Math.min(100, d.latestRate)}%`,
-                                        background: rateColor(d.latestRate),
-                                      }} />
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <ReorderBadge rate={d.latestRate} />
-                              </td>
-                            </tr>
-                          ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
               <p className="mt-3 text-xs text-gray-400">
-                정판율 = 누적 정상판매액 ÷ 발주액[정상가+예판가] · 출처: 스판재 × 매출상세 구글 시트
+                정판율 = 누적 정상판매액 ÷ 발주액[정상가+예판가] · 날씨: 기상청 ASOS 서울 관측소
               </p>
             </>
           )}
@@ -383,25 +332,35 @@ export default function DashboardPage() {
       {/* ── 예측 탭 ── */}
       {tab === "predict" && (
         <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
-          <p className="text-sm text-gray-500">🔮 AI 예측은 다음 단계에서 활성화됩니다.</p>
+          <p className="text-sm text-gray-500">🔮 AI 시즌 예측은 다음 단계에서 활성화됩니다.</p>
         </div>
       )}
     </main>
   );
 }
 
-// ── 공통 컴포넌트 ──
+// ── 유틸 ──
+function fmtKRW(v: number) {
+  if (v >= 100000000) return `${(v / 100000000).toFixed(1)}억`;
+  if (v >= 10000) return `${(v / 10000).toLocaleString()}만`;
+  return v.toLocaleString();
+}
 
+function rateColor(rate: number) {
+  if (rate >= 70) return "#3B6D11";
+  if (rate >= 50) return "#854F0B";
+  return "#A32D2D";
+}
+
+// ── 공통 컴포넌트 ──
 function MetricCard({ label, value, sub, highlight }: {
-  label: string; value: string; sub?: string; highlight?: "green"|"amber"|"red";
+  label: string; value: string; sub?: string; highlight?: "green" | "amber" | "red";
 }) {
   const colors = { green: "#3B6D11", amber: "#854F0B", red: "#A32D2D" };
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4">
       <p className="text-xs text-gray-400 mb-1">{label}</p>
-      <p className="text-xl font-semibold" style={{ color: highlight ? colors[highlight] : undefined }}>
-        {value}
-      </p>
+      <p className="text-xl font-semibold" style={{ color: highlight ? colors[highlight] : undefined }}>{value}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
     </div>
   );
@@ -416,19 +375,12 @@ function LoadingSpinner({ text }: { text: string }) {
   );
 }
 
-function ErrorBox({ message, sub }: { message: string; sub?: string }) {
+function ErrorBox({ message }: { message: string }) {
   return (
     <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
       <strong>오류:</strong> {message}
-      {sub && <p className="mt-1 text-xs text-red-500">{sub}</p>}
     </div>
   );
-}
-
-function rateColor(rate: number) {
-  if (rate >= 70) return "#3B6D11";
-  if (rate >= 50) return "#854F0B";
-  return "#A32D2D";
 }
 
 function ReorderBadge({ rate }: { rate: number }) {
